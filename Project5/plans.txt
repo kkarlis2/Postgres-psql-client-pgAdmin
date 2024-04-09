@@ -1,0 +1,255 @@
+EXPLAIN ANALYZE SELECT host.id,COUNT(*)
+FROM listing_copy,host 
+where host.id=listing_copy.host_id
+GROUP BY host.id
+
+/* BEFORE INDEX */
+
+"HashAggregate  (cost=3637.60..3701.23 rows=6363 width=12) (actual time=8.312..8.743 rows=6363 loops=1)"
+"  Group Key: host.id"
+"  ->  Hash Join  (cost=618.17..3579.89 rows=11541 width=4) (actual time=1.574..7.035 rows=11541 loops=1)"
+"        Hash Cond: (listing_copy.host_id = host.id)"
+"        ->  Seq Scan on listing_copy  (cost=0.00..2931.41 rows=11541 width=4) (actual time=0.008..4.126 rows=11541 loops=1)"
+"        ->  Hash  (cost=538.63..538.63 rows=6363 width=4) (actual time=1.537..1.537 rows=6363 loops=1)"
+"              Buckets: 8192  Batches: 1  Memory Usage: 288kB"
+"              ->  Seq Scan on host  (cost=0.00..538.63 rows=6363 width=4) (actual time=0.009..0.879 rows=6363 loops=1)"
+"Planning Time: 9.348 ms"
+"Execution Time: 9.038 ms"
+
+/* AFTER INDEX /*
+
+"HashAggregate  (cost=3637.60..3701.23 rows=6363 width=12) (actual time=6.642..7.057 rows=6363 loops=1)"
+"  Group Key: host.id"
+"  ->  Hash Join  (cost=618.17..3579.89 rows=11541 width=4) (actual time=0.928..5.632 rows=11541 loops=1)"
+"        Hash Cond: (listing_copy.host_id = host.id)"
+"        ->  Seq Scan on listing_copy  (cost=0.00..2931.41 rows=11541 width=4) (actual time=0.009..3.577 rows=11541 loops=1)"
+"        ->  Hash  (cost=538.63..538.63 rows=6363 width=4) (actual time=0.900..0.901 rows=6363 loops=1)"
+"              Buckets: 8192  Batches: 1  Memory Usage: 288kB"
+"              ->  Seq Scan on host  (cost=0.00..538.63 rows=6363 width=4) (actual time=0.005..0.545 rows=6363 loops=1)"
+"Planning Time: 21.115 ms"
+"Execution Time: 7.328 ms"
+
+/*Query 1: w/out index: 9.038 ms;w/index: 7.328 ms; */
+
+----------------------------------------------------------------------------------------------------------------------------
+
+explain analyze select listings.id,price.price 
+from listings,price 
+where listings.guests_included >5 and price.price > 40;
+
+/* BEFORE INDEXES */
+"Nested Loop  (cost=0.00..13974.59 rows=857881 width=36) (actual time=0.108..83.094 rows=1507072 loops=1)"
+"  ->  Seq Scan on price  (cost=0.00..290.26 rows=3847 width=32) (actual time=0.018..1.042 rows=6728 loops=1)"
+"        Filter: (price > '40'::numeric)"
+"        Rows Removed by Filter: 4813"
+"  ->  Materialize  (cost=0.00..2961.38 rows=223 width=4) (actual time=0.000..0.004 rows=224 loops=6728)"
+"        ->  Seq Scan on listings  (cost=0.00..2960.26 rows=223 width=4) (actual time=0.088..6.521 rows=224 loops=1)"
+"              Filter: (guests_included > 5)"
+"              Rows Removed by Filter: 11317"
+"Planning Time: 37.158 ms"
+"Execution Time: 97.081 ms"
+
+
+/* AFTER INDEXES */
+
+"Nested Loop  (cost=9.32..11708.21 rows=857881 width=36) (actual time=1.695..69.464 rows=1507072 loops=1)"
+"  ->  Seq Scan on price  (cost=0.00..290.26 rows=3847 width=32) (actual time=0.004..0.875 rows=6728 loops=1)"
+"        Filter: (price > '40'::numeric)"
+"        Rows Removed by Filter: 4813"
+"  ->  Materialize  (cost=9.32..695.00 rows=223 width=4) (actual time=0.000..0.003 rows=224 loops=6728)"
+"        ->  Bitmap Heap Scan on listings  (cost=9.32..693.88 rows=223 width=4) (actual time=1.688..1.792 rows=224 loops=1)"
+"              Recheck Cond: (guests_included > 5)"
+"              Heap Blocks: exact=212"
+"              ->  Bitmap Index Scan on listings_index  (cost=0.00..9.26 rows=223 width=0) (actual time=1.675..1.675 rows=224 loops=1)"
+"Planning Time: 10.140 ms"
+"Execution Time: 81.879 ms"
+
+/* Query 2: w/out index: 97.081ms;w/index: 81.879 ms;*/
+
+----------------------------------------------------------------------------------------------------------------------------
+
+explain analyze 
+select price.id,price.weekly_price
+from price
+inner join room
+on price.id=room.id
+where price.weekly_price<200 AND room.bedrooms>=2;
+
+/* BEFORE INDEX */
+
+
+"Nested Loop  (cost=0.57..1418.36 rows=46 width=9) (actual time=0.012..1.466 rows=17 loops=1)"
+"  ->  Index Scan using price_index1 on price  (cost=0.29..600.54 rows=124 width=9) (actual time=0.008..1.315 rows=126 loops=1)"
+"        Filter: (weekly_price < '200'::numeric)"
+"        Rows Removed by Filter: 11415"
+"  ->  Index Scan using room_pkey on room  (cost=0.29..6.60 rows=1 width=4) (actual time=0.001..0.001 rows=0 loops=126)"
+"        Index Cond: (id = price.id)"
+"        Filter: (bedrooms >= 2)"
+"        Rows Removed by Filter: 1"
+"Planning Time: 0.144 ms"
+"Execution Time: 1.480 ms"
+
+/*AFTER INDEX */
+
+"Nested Loop  (cost=9.08..975.21 rows=46 width=9) (actual time=0.044..0.186 rows=17 loops=1)"
+"  ->  Bitmap Heap Scan on price  (cost=8.79..157.38 rows=124 width=9) (actual time=0.025..0.048 rows=126 loops=1)"
+"        Recheck Cond: (weekly_price < '200'::numeric)"
+"        Heap Blocks: exact=27"
+"        ->  Bitmap Index Scan on price_index2  (cost=0.00..8.76 rows=124 width=0) (actual time=0.020..0.020 rows=126 loops=1)"
+"  ->  Index Scan using room_pkey on room  (cost=0.29..6.60 rows=1 width=4) (actual time=0.001..0.001 rows=0 loops=126)"
+"        Index Cond: (id = price.id)"
+"        Filter: (bedrooms >= 2)"
+"        Rows Removed by Filter: 1"
+"Planning Time: 0.190 ms"
+"Execution Time: 0.206 ms"
+
+
+/*Query 3: w/out index:1.480 ms;w/index: 0.206ms; */
+
+----------------------------------------------------------------------------------------------------------------------------
+
+explain analyze 
+select host.neighbourhood,count(host.id) as num_of_apartments
+from host
+full outer join price
+on host.id=price.id
+where host.host_acceptance_rate='100%' and host.neighbourhood!= '' 
+group by neighbourhood 
+having count(host.id) >50
+order by num_of_apartments desc;
+
+/* BEFORE INDEX */
+"Sort  (cost=591.50..591.56 rows=23 width=26) (actual time=1.968..1.968 rows=21 loops=1)"
+"  Sort Key: (count(host.id)) DESC"
+"  Sort Method: quicksort  Memory: 26kB"
+"  ->  HashAggregate  (cost=590.12..590.98 rows=23 width=26) (actual time=1.940..1.948 rows=21 loops=1)"
+"        Group Key: host.neighbourhood"
+"        Filter: (count(host.id) > 50)"
+"        Rows Removed by Filter: 22"
+"        ->  Seq Scan on host  (cost=0.00..570.44 rows=2623 width=13) (actual time=0.012..1.493 rows=2717 loops=1)"
+"              Filter: (((neighbourhood)::text <> ''::text) AND ((host_acceptance_rate)::text = '100%'::text))"
+"              Rows Removed by Filter: 3646"
+"Planning Time: 28.290 ms"
+"Execution Time: 2.024 ms"
+
+
+/*AFTER INDEX */
+
+"Sort  (cost=591.50..591.56 rows=23 width=26) (actual time=1.617..1.617 rows=21 loops=1)"
+"  Sort Key: (count(host.id)) DESC"
+"  Sort Method: quicksort  Memory: 26kB"
+"  ->  HashAggregate  (cost=590.12..590.98 rows=23 width=26) (actual time=1.607..1.610 rows=21 loops=1)"
+"        Group Key: host.neighbourhood"
+"        Filter: (count(host.id) > 50)"
+"        Rows Removed by Filter: 22"
+"        ->  Seq Scan on host  (cost=0.00..570.44 rows=2623 width=13) (actual time=0.011..1.253 rows=2717 loops=1)"
+"              Filter: (((neighbourhood)::text <> ''::text) AND ((host_acceptance_rate)::text = '100%'::text))"
+"              Rows Removed by Filter: 3646"
+"Planning Time: 14.343 ms"
+"Execution Time: 1.656 ms"
+
+/*Query 4: w/out index:2.024 ms;w/index: 1.656ms; */
+
+----------------------------------------------------------------------------------------------------------------------------
+
+explain analyze
+select location.id,location.neighbourhood,location.neighbourhood_cleansed
+from location
+inner join geolocation
+on geolocation.properties_neighbourhood = location.neighbourhood_cleansed
+where zipcode= '11143';
+
+/* BEFORE INDEX */
+
+"Nested Loop  (cost=10000000000.14..10000000385.98 rows=4 width=42) (actual time=0.032..1.279 rows=3 loops=1)"
+"  ->  Seq Scan on location  (cost=10000000000.00..10000000377.26 rows=4 width=42) (actual time=0.025..1.266 rows=3 loops=1)"
+"        Filter: ((zipcode)::text = '11143'::text)"
+"        Rows Removed by Filter: 11538"
+"  ->  Index Only Scan using geolocation_pkey on geolocation  (cost=0.14..2.16 rows=1 width=21) (actual time=0.003..0.003 rows=1 loops=3)"
+"        Index Cond: (properties_neighbourhood = (location.neighbourhood_cleansed)::text)"
+"        Heap Fetches: 0"
+"Planning Time: 0.283 ms"
+"Execution Time: 1.300 ms"
+
+/* AFTER INDEX */
+
+"Nested Loop  (cost=10000000000.14..10000000385.98 rows=4 width=42) (actual time=0.020..0.800 rows=3 loops=1)"
+"  ->  Seq Scan on location  (cost=10000000000.00..10000000377.26 rows=4 width=42) (actual time=0.016..0.793 rows=3 loops=1)"
+"        Filter: ((zipcode)::text = '11143'::text)"
+"        Rows Removed by Filter: 11538"
+"  ->  Index Only Scan using geolocation_index on geolocation  (cost=0.14..2.16 rows=1 width=21) (actual time=0.002..0.002 rows=1 loops=3)"
+"        Index Cond: (properties_neighbourhood = (location.neighbourhood_cleansed)::text)"
+"        Heap Fetches: 0"
+"Planning Time: 45.539 ms"
+"Execution Time: 0.814 ms"
+
+/*Query 5: w/out index:1300 ms;w/index: 0.814ms; */
+
+----------------------------------------------------------------------------------------------------------------------------
+
+explain analyze
+select location.neighbourhood,cast(avg(room.accommodates) as integer)
+from room
+full outer join location
+on room.id=location.id
+where location.neighbourhood!=''
+group by location.neighbourhood
+having avg(room.accommodates) between 2 and 5;
+
+
+
+"HashAggregate  (cost=3170.68..3171.41 rows=1 width=13) (actual time=6.155..6.162 rows=32 loops=1)"
+"  Group Key: location.neighbourhood"
+"  Filter: ((avg(room.accommodates) >= '2'::numeric) AND (avg(room.accommodates) <= '5'::numeric))"
+"  ->  Merge Left Join  (cost=0.57..3055.28 rows=11540 width=13) (actual time=0.011..4.924 rows=11540 loops=1)"
+"        Merge Cond: (location.id = room.id)"
+"        ->  Index Scan using location_pkey on location  (cost=0.29..577.61 rows=11540 width=13) (actual time=0.007..1.411 rows=11540 loops=1)"
+"              Filter: ((neighbourhood)::text <> ''::text)"
+"              Rows Removed by Filter: 1"
+"        ->  Index Scan using room_pkey on room  (cost=0.29..2304.57 rows=11541 width=8) (actual time=0.003..1.871 rows=11541 loops=1)"
+"Planning Time: 0.182 ms"
+"Execution Time: 6.198 ms"
+
+
+"HashAggregate  (cost=3170.68..3171.41 rows=1 width=13) (actual time=5.597..5.605 rows=32 loops=1)"
+"  Group Key: location.neighbourhood"
+"  Filter: ((avg(room.accommodates) >= '2'::numeric) AND (avg(room.accommodates) <= '5'::numeric))"
+"  ->  Merge Left Join  (cost=0.57..3055.28 rows=11540 width=13) (actual time=0.008..4.543 rows=11540 loops=1)"
+"        Merge Cond: (location.id = room.id)"
+"        ->  Index Scan using location_pkey on location  (cost=0.29..577.61 rows=11540 width=13) (actual time=0.005..1.326 rows=11540 loops=1)"
+"              Filter: ((neighbourhood)::text <> ''::text)"
+"              Rows Removed by Filter: 1"
+"        ->  Index Scan using room_pkey on room  (cost=0.29..2304.57 rows=11541 width=8) (actual time=0.002..1.738 rows=11541 loops=1)"
+"Planning Time: 19.521 ms"
+"Execution Time: 5.636 ms"
+
+
+/*Query 6: w/out index:6.198 ms;w/index: 5.636ms; */
+
+----------------------------------------------------------------------------------------------------------------------------
+
+explain analyze
+select host.*
+from host
+left join location
+on host.id=location.id
+where host.has_profile_pic= 'true' and  host.indentity_verified='true';
+
+
+"Seq Scan on host  (cost=10000000000.00..10000000538.63 rows=1152 width=542) (actual time=0.010..1.643 rows=1157 loops=1)"
+"  Filter: (has_profile_pic AND indentity_verified)"
+"  Rows Removed by Filter: 5206"
+"Planning Time: 0.080 ms"
+"Execution Time: 1.678 ms"
+
+
+"Seq Scan on host  (cost=10000000000.00..10000000538.63 rows=1152 width=542) (actual time=0.010..0.976 rows=1157 loops=1)"
+"  Filter: (has_profile_pic AND indentity_verified)"
+"  Rows Removed by Filter: 5206"
+"Planning Time: 8.953 ms"
+"Execution Time: 0.996 ms"
+
+
+/*Query 7: w/out index:1.687 ms;w/index: 0.996ms; */
+
+----------------------------------------------------------------------------------------------------------------------------
